@@ -12,37 +12,46 @@ import (
 	"unicode"
 
 	"github.com/andybalholm/cascadia"
-
 	"gopkg.in/mgo.v2"
+	"gopkg.in/mgo.v2/bson"
 
 	"golang.org/x/net/html"
 )
 
 func main() {
 
-	//getFeeds("http://rss.cnn.com/rss/cnn_topstories.rss")
+	getFeeds("http://rss.cnn.com/rss/cnn_topstories.rss")
 	processWords()
 }
 
-func getFeeds(urlPath string) {
-	type Feed struct {
-		Title   string `xml:"title"`
-		Link    string `xml:"link"`
-		PubDate string `xml:"pubDate"`
-		Date    time.Time
-	}
+type Word struct {
+	Name  string `bson:"name"`
+	Count int    `bson:"count"`
+}
 
-	type Result struct {
-		XMLName xml.Name `xml:"rss"`
-		Version string   `xml:"version,attr"`
-		// Required
-		Title       string `xml:"channel>title"`
-		Link        string `xml:"channel>link"`
-		Description string `xml:"channel>description"`
-		// Optional
-		PubDate  string `xml:"channel>pubDate"`
-		ItemList []Feed `xml:"channel>item"`
-	}
+type Feed struct {
+	Id        bson.ObjectId `bson:"_id,omitempty"`
+	Title     string        `xml:"title"`
+	Link      string        `xml:"link"`
+	PubDate   string        `xml:"pubDate"`
+	Date      time.Time
+	Words     []Word `bson:"Words"`
+	Processed bool
+}
+
+type Result struct {
+	XMLName xml.Name `xml:"rss"`
+	Version string   `xml:"version,attr"`
+	// Required
+	Title       string `xml:"channel>title"`
+	Link        string `xml:"channel>link"`
+	Description string `xml:"channel>description"`
+	// Optional
+	PubDate  string `xml:"channel>pubDate"`
+	ItemList []Feed `xml:"channel>item"`
+}
+
+func getFeeds(urlPath string) {
 
 	resp, err := http.Get(urlPath)
 	if err != nil {
@@ -59,7 +68,7 @@ func getFeeds(urlPath string) {
 	feeds := session.DB("wcproc").C("feeds")
 
 	feed := Feed{}
-	feeds.Find(nil).Sort("date : -1").One(&feed)
+	feeds.Find(nil).Sort("-date").One(&feed)
 
 	//convert the feed.date string to time.Time since unmarshal wont do it for me
 	for iter, element := range results.ItemList {
@@ -67,9 +76,14 @@ func getFeeds(urlPath string) {
 	}
 
 	//check to see if any articles exist past the last article date in db
+	fmt.Printf("feedDate: %v \n", feed.Date)
+
 	for iter, element := range results.ItemList {
-		fmt.Printf("elementDate: %v,  feedDate: %v \n", element.Date, feed.Date)
-		if element.Date.After(feed.Date) {
+		//fmt.Printf("dbDates: %v \n", element.Date.Local())
+
+		if element.Date.After(feed.Date.Local()) {
+			fmt.Printf("adding:  %v -- %v \n", element.Date, element.Title)
+
 			_ = feeds.Insert(results.ItemList[iter])
 		}
 	}
@@ -79,17 +93,6 @@ func getFeeds(urlPath string) {
 }
 
 func processWords() {
-	type Feed struct {
-		Title   string `xml:"title"`
-		Link    string `xml:"link"`
-		PubDate string `xml:"pubDate"`
-		Date    time.Time
-	}
-
-	type Word struct {
-		name  string
-		count int
-	}
 
 	//placeholder
 	session, _ := mgo.Dial("localhost")
@@ -97,7 +100,8 @@ func processWords() {
 
 	feed := Feed{}
 	feeds.Find(nil).Sort("date : -1").One(&feed)
-	session.Close()
+
+	fmt.Printf("processing.. %v", feed.Link)
 
 	resp, err := http.Get(feed.Link)
 	if err != nil {
@@ -122,11 +126,9 @@ func processWords() {
 	//----------------
 
 	f := func(c rune) bool {
-		return !unicode.IsLetter(c)
+		return !unicode.IsLetter(c) && unicode.IsNumber(c)
 	}
-	fmt.Printf("Fields are: %q", strings.FieldsFunc(strBuffer.String(), f))
-
-	//processedStr := strings.FieldsFunc(strBuffer.String(), f)
+	strings.FieldsFunc(strBuffer.String(), f)
 
 	words := make(map[string]int)
 
@@ -135,7 +137,14 @@ func processWords() {
 	}
 
 	for key, value := range words {
-		fmt.Println("Key:", key, "Value: ", value, "\n")
+
+		if !strings.ContainsAny(key, "<>/_=;#&()*%$@") {
+			item := Word{Name: key, Count: value}
+			feed.Words = append(feed.Words, item)
+		}
 	}
+	feed.Processed = true
+	feeds.Update(bson.M{"_id": feed.Id}, feed)
+	session.Close()
 
 }
