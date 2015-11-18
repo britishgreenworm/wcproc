@@ -18,12 +18,6 @@ import (
 	"golang.org/x/net/html"
 )
 
-func main() {
-
-	getFeeds("http://rss.cnn.com/rss/cnn_topstories.rss")
-	processWords()
-}
-
 type Word struct {
 	Name  string `bson:"name"`
 	Count int    `bson:"count"`
@@ -49,6 +43,29 @@ type Result struct {
 	// Optional
 	PubDate  string `xml:"channel>pubDate"`
 	ItemList []Feed `xml:"channel>item"`
+}
+
+func main() {
+
+	//only can use utf-8 encoded xml files
+	getFeeds("http://rss.cnn.com/rss/cnn_topstories.rss")
+
+	//grab all the feeds that haven't been processed
+	session, _ := mgo.Dial("localhost")
+	feedCollection := session.DB("wcproc").C("feeds")
+	feeds := []Feed{}
+	feedCollection.Find(bson.M{"processed": false}).All(&feeds)
+
+	session.Close()
+
+	//work through all the sites
+	for _, feed := range feeds {
+
+		fmt.Printf("processing..: %v \n", feed.Title)
+
+		processWords(feed)
+	}
+
 }
 
 func getFeeds(urlPath string) {
@@ -92,16 +109,11 @@ func getFeeds(urlPath string) {
 
 }
 
-func processWords() {
+func processWords(feed Feed) {
 
 	//placeholder
 	session, _ := mgo.Dial("localhost")
 	feeds := session.DB("wcproc").C("feeds")
-
-	feed := Feed{}
-	feeds.Find(nil).Sort("date : -1").One(&feed)
-
-	fmt.Printf("processing.. %v", feed.Link)
 
 	resp, err := http.Get(feed.Link)
 	if err != nil {
@@ -137,12 +149,12 @@ func processWords() {
 	}
 
 	for key, value := range words {
-
 		if !strings.ContainsAny(key, "<>/_=;#&()*%$@") {
 			item := Word{Name: key, Count: value}
 			feed.Words = append(feed.Words, item)
 		}
 	}
+
 	feed.Processed = true
 	feeds.Update(bson.M{"_id": feed.Id}, feed)
 	session.Close()
