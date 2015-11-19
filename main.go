@@ -45,6 +45,10 @@ type Result struct {
 	ItemList []Feed `xml:"channel>item"`
 }
 
+func handler(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintf(w, "Hi there, I love %s!", r.URL.Path[1:])
+}
+
 func main() {
 
 	//only can use utf-8 encoded xml files
@@ -65,6 +69,12 @@ func main() {
 
 		processWords(feed)
 	}
+
+	http.HandleFunc("/", handler)
+	http.ListenAndServe(":8080", nil)
+
+	//use to count words
+	//db.feeds.aggregate({ $project: {  Words: 1 }}, { $unwind: "$Words" }, { $group: { _id: "$Words.name", count: { $sum: 1 } }});
 
 }
 
@@ -107,6 +117,17 @@ func getFeeds(urlPath string) {
 
 	session.Close()
 
+}
+
+//array functionality with strings.contains
+func containWords(word string, words []string) bool {
+	for _, ele := range words {
+		if !strings.Contains(word, ele) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func processWords(feed Feed) {
