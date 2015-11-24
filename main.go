@@ -12,10 +12,9 @@ import (
 	"unicode"
 
 	"github.com/andybalholm/cascadia"
+	"golang.org/x/net/html"
 	"gopkg.in/mgo.v2"
 	"gopkg.in/mgo.v2/bson"
-
-	"golang.org/x/net/html"
 )
 
 type Word struct {
@@ -45,33 +44,104 @@ type Result struct {
 	ItemList []Feed `xml:"channel>item"`
 }
 
-func handler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "Hi there, I love %s!", r.URL.Path[1:])
+type Page struct {
+	Title string
+	Body  []byte
 }
 
 func main() {
 
-	//only can use utf-8 encoded xml files
-	getFeeds("http://rss.cnn.com/rss/cnn_topstories.rss")
+	feeds := []string{"http://rss.cnn.com/rss/cnn_topstories.rss"}
 
-	//grab all the feeds that haven't been processed
+	//time inverval when feed starts, feeds to put in, (utf8 only)
+	go startFeeder(10, feeds)
+	go startWordProc(11)
+
+	http.HandleFunc("/", handler)
+	http.HandleFunc("/api/getwords", getWordHandler)
+	http.ListenAndServe(":8080", nil)
+
+}
+
+func startFeeder(seconds int, feeds []string) {
+	for true {
+		//only can use utf-8 encoded xml files
+		for _, feed := range feeds {
+			getFeeds(feed)
+		}
+
+		time.Sleep(time.Duration(seconds) * time.Second)
+	}
+}
+
+func startWordProc(seconds int) {
+	for true {
+		//grab all the feeds that haven't been processed
+		session, _ := mgo.Dial("localhost")
+		feedCollection := session.DB("wcproc").C("feeds")
+		feeds := []Feed{}
+		feedCollection.Find(bson.M{"processed": false}).All(&feeds)
+
+		session.Close()
+
+		//work through all the sites
+		for _, feed := range feeds {
+
+			fmt.Printf("processing..: %v \n", feed.Title)
+
+			processWords(feed)
+		}
+		time.Sleep(time.Duration(seconds) * time.Millisecond)
+	}
+}
+
+func loadPage(title string) []byte {
+	filename := title
+	body, _ := ioutil.ReadFile(filename)
+	fmt.Printf("loading:  %v \n", title)
+
+	return body
+}
+
+func handler(w http.ResponseWriter, r *http.Request) {
+	title := r.URL.Path[1:]
+	p := loadPage(title)
+
+	fmt.Fprintf(w, string(p))
+
+	//use to count words
+	//db.feeds.aggregate({ $project: {  Words: 1 }}, { $unwind: "$Words" }, { $group: { _id: "$Words.name", count: { $sum: 1 } }});
+
+}
+
+func getWordHandler(w http.ResponseWriter, r *http.Request) {
+
 	session, _ := mgo.Dial("localhost")
-	feedCollection := session.DB("wcproc").C("feeds")
-	feeds := []Feed{}
-	feedCollection.Find(bson.M{"processed": false}).All(&feeds)
+	wordsCollection := session.DB("wcproc").C("feeds")
+
+	project := bson.M{"$project": bson.M{"Words": 1}}
+	unWind := bson.M{"$unwind": "$Words"}
+
+	//group := bson.M{"$group": bson.M{"_id": "$Words.name", "count": bson.M{"$sum": 1}}}
+
+	//sort := bson.M{"$sort": bson.M{"count": -1}}
+	limit := bson.M{"$limit": 100}
+
+	operations := []bson.M{project, unWind, limit}
+
+	pipe := wordsCollection.Pipe(operations)
+
+	results := []Feed{}
+	err := pipe.All(&results)
+	fmt.Printf("%v", err.Error())
 
 	session.Close()
 
-	//work through all the sites
-	for _, feed := range feeds {
-
-		fmt.Printf("processing..: %v \n", feed.Title)
-
-		processWords(feed)
+	for _, res := range results {
+		fmt.Printf("%v", res)
 	}
 
-	http.HandleFunc("/", handler)
-	http.ListenAndServe(":8080", nil)
+	fmt.Fprintf(w, "tester")
 
 	//use to count words
 	//db.feeds.aggregate({ $project: {  Words: 1 }}, { $unwind: "$Words" }, { $group: { _id: "$Words.name", count: { $sum: 1 } }});
