@@ -18,8 +18,8 @@ import (
 )
 
 type Word struct {
-	Name  string `bson:"name"`
-	Count int    `bson:"count"`
+	Name  string `bson:"_id" json:"name"`
+	Count int    `json:"count"`
 }
 
 type Feed struct {
@@ -30,6 +30,10 @@ type Feed struct {
 	Date      time.Time
 	Words     []Word `bson:"Words"`
 	Processed bool
+}
+
+type Wrapper struct {
+	Words []Word
 }
 
 type Result struct {
@@ -122,26 +126,27 @@ func getWordHandler(w http.ResponseWriter, r *http.Request) {
 	project := bson.M{"$project": bson.M{"Words": 1}}
 	unWind := bson.M{"$unwind": "$Words"}
 
-	//group := bson.M{"$group": bson.M{"_id": "$Words.name", "count": bson.M{"$sum": 1}}}
+	group := bson.M{"$group": bson.M{"_id": "$Words.name", "count": bson.M{"$sum": 1}}}
 
-	//sort := bson.M{"$sort": bson.M{"count": -1}}
-	limit := bson.M{"$limit": 100}
+	sort := bson.M{"$sort": bson.M{"count": -1}}
+	//limit := bson.M{"$limit": 100}
 
-	operations := []bson.M{project, unWind, limit}
+	operations := []bson.M{project, unWind, group, sort}
 
 	pipe := wordsCollection.Pipe(operations)
 
-	results := []Feed{}
+	var results []Word
 	err := pipe.All(&results)
-	fmt.Printf("%v", err.Error())
+	if err != nil {
+		fmt.Printf("%v", err.Error())
+	}
 
 	session.Close()
 
-	for _, res := range results {
-		fmt.Printf("%v", res)
+	for _, word := range results {
+		fmt.Printf("name: %v %v \n", word.Name, word.Count)
+		fmt.Fprintf(w, "name: %v %v \n", word.Name, word.Count)
 	}
-
-	fmt.Fprintf(w, "tester")
 
 	//use to count words
 	//db.feeds.aggregate({ $project: {  Words: 1 }}, { $unwind: "$Words" }, { $group: { _id: "$Words.name", count: { $sum: 1 } }});
