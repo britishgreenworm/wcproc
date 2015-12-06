@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"io/ioutil"
@@ -58,8 +59,8 @@ func main() {
 	feeds := []string{"http://rss.cnn.com/rss/cnn_topstories.rss"}
 
 	//time inverval when feed starts, feeds to put in, (utf8 only)
-	go startFeeder(10, feeds)
-	go startWordProc(11)
+	go startFeeder(300, feeds)
+	go startWordProc(301)
 
 	http.HandleFunc("/", handler)
 	http.HandleFunc("/api/getwords", getWordHandler)
@@ -126,12 +127,12 @@ func getWordHandler(w http.ResponseWriter, r *http.Request) {
 	project := bson.M{"$project": bson.M{"Words": 1}}
 	unWind := bson.M{"$unwind": "$Words"}
 
-	group := bson.M{"$group": bson.M{"_id": "$Words.name", "count": bson.M{"$sum": 1}}}
+	group := bson.M{"$group": bson.M{"_id": "$Words._id", "count": bson.M{"$sum": 1}}}
 
 	sort := bson.M{"$sort": bson.M{"count": -1}}
-	//limit := bson.M{"$limit": 100}
+	limit := bson.M{"$limit": 50}
 
-	operations := []bson.M{project, unWind, group, sort}
+	operations := []bson.M{project, unWind, group, sort, limit}
 
 	pipe := wordsCollection.Pipe(operations)
 
@@ -143,10 +144,8 @@ func getWordHandler(w http.ResponseWriter, r *http.Request) {
 
 	session.Close()
 
-	for _, word := range results {
-		fmt.Printf("name: %v %v \n", word.Name, word.Count)
-		fmt.Fprintf(w, "name: %v %v \n", word.Name, word.Count)
-	}
+	jsonWords, err := json.Marshal(results)
+	fmt.Fprintf(w, string(jsonWords))
 
 	//use to count words
 	//db.feeds.aggregate({ $project: {  Words: 1 }}, { $unwind: "$Words" }, { $group: { _id: "$Words.name", count: { $sum: 1 } }});
@@ -197,7 +196,7 @@ func getFeeds(urlPath string) {
 //array functionality with strings.contains
 func containWords(word string, words []string) bool {
 	for _, ele := range words {
-		if !strings.Contains(word, ele) {
+		if strings.Contains(strings.ToLower(strings.Trim(word, ". ,")), ele) {
 			return true
 		}
 	}
@@ -244,10 +243,20 @@ func processWords(feed Feed) {
 		words[w]++
 	}
 
+	omitWords := []string{"the", "of", "a", "at", "as", "with", "been", "in", "that", "and", "with", "from", "more", "been", "we", "not", "by", "he", "who", "were",
+		"so", "just", "also", "his", "will", "up", "had", "out", "if", "an", "to", "on", "which", "just", "they", "is", "it", "but", "its", "could", "us",
+		"him", "next", "time", "like", "...", "both", "stil", "why", "it", "even", "no", "do", "first", "two", "for", "or", "our", "did", "very", "yet",
+		"most", "new", "how", "you", "i", "we", "sure", "move", "close", "until", "my", "get", "go", "those", "though", "be", " ", "me", "met", "recent",
+		"rest", "end", "put", "seen", "else", "should", "met", "center", "over", "would", "much", "lot", "room", "three", "four", "five", "six", "seven",
+		"eight", "nine", "ten"}
+
 	for key, value := range words {
-		if !strings.ContainsAny(key, "<>/_=;#&()*%$@") {
-			item := Word{Name: key, Count: value}
-			feed.Words = append(feed.Words, item)
+		if !strings.ContainsAny(key, "-<>/_=;#&()*%$@1234567890") {
+			if !containWords(key, omitWords) {
+
+				item := Word{Name: strings.ToLower(strings.Trim(key, ". ,")), Count: value}
+				feed.Words = append(feed.Words, item)
+			}
 		}
 	}
 
