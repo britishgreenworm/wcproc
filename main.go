@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -29,6 +30,8 @@ type Feed struct {
 	Link      string        `xml:"link"`
 	PubDate   string        `xml:"pubDate"`
 	Date      time.Time
+	Category  string
+	ArticleId string
 	Words     []Word `bson:"Words"`
 	Processed bool
 }
@@ -54,12 +57,22 @@ type Page struct {
 	Body  []byte
 }
 
+//articleId is the class or id name of the element in which to get the articles words from (include . or #)
+type FeedSetting struct {
+	Name      string
+	URL       string
+	ArticleId string
+}
+
 func main() {
 
-	feeds := []string{"http://rss.cnn.com/rss/cnn_topstories.rss"}
+	feedSettings := []FeedSetting{
+		{Name: "CNN", URL: "http://rss.cnn.com/rss/cnn_topstories.rss", ArticleId: ".zn-body__paragraph"},
+		{Name: "CBS", URL: "http://www.cbsnews.com/latest/rss/main", ArticleId: "#article-entry"},
+		{Name: "BBC", URL: "http://feeds.bbci.co.uk/news/rss.xml", ArticleId: ".story-body__inner"}}
 
 	//time inverval when feed starts, feeds to put in, (utf8 only)
-	go startFeeder(300, feeds)
+	go startFeeder(300, feedSettings)
 	go startWordProc(301)
 
 	http.HandleFunc("/", handler)
@@ -68,10 +81,11 @@ func main() {
 
 }
 
-func startFeeder(seconds int, feeds []string) {
+func startFeeder(seconds int, feedSettings []FeedSetting) {
 	for true {
 		//only can use utf-8 encoded xml files
-		for _, feed := range feeds {
+		for _, feed := range feedSettings {
+			fmt.Printf("Looking for new feeds in... %v \n", feed.Name)
 			getFeeds(feed)
 		}
 
@@ -92,10 +106,11 @@ func startWordProc(seconds int) {
 		//work through all the sites
 		for _, feed := range feeds {
 
-			fmt.Printf("processing..: %v \n", feed.Title)
-
 			processWords(feed)
+			fmt.Printf("processed..: %v from: %v \n", feed.Title, feed.Category)
+
 		}
+
 		time.Sleep(time.Duration(seconds) * time.Millisecond)
 	}
 }
@@ -115,16 +130,19 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, string(p))
 
 	//use to count words
-	//db.feeds.aggregate({ $project: {  Words: 1 }}, { $unwind: "$Words" }, { $group: { _id: "$Words.name", count: { $sum: 1 } }});
+	//db.feeds.aggregate({$match: { category: "BBC"}}, { $project: {  Words: 1 }}, { $unwind: "$Words" }, { $group: { _id: "$Words.name", count: { $sum: 1 } }});
 
 }
 
 func getWordHandler(w http.ResponseWriter, r *http.Request) {
 
+	matchParam := r.URL.Query()["category"][0]
+
 	session, _ := mgo.Dial("localhost")
 	wordsCollection := session.DB("wcproc").C("feeds")
 
 	project := bson.M{"$project": bson.M{"Words": 1}}
+	match := bson.M{"$match": bson.M{"category": matchParam}}
 	unWind := bson.M{"$unwind": "$Words"}
 
 	group := bson.M{"$group": bson.M{"_id": "$Words._id", "count": bson.M{"$sum": 1}}}
@@ -132,7 +150,7 @@ func getWordHandler(w http.ResponseWriter, r *http.Request) {
 	sort := bson.M{"$sort": bson.M{"count": -1}}
 	limit := bson.M{"$limit": 50}
 
-	operations := []bson.M{project, unWind, group, sort, limit}
+	operations := []bson.M{match, project, unWind, group, sort, limit}
 
 	pipe := wordsCollection.Pipe(operations)
 
@@ -152,9 +170,9 @@ func getWordHandler(w http.ResponseWriter, r *http.Request) {
 
 }
 
-func getFeeds(urlPath string) {
+func getFeeds(feedSetting FeedSetting) {
 
-	resp, err := http.Get(urlPath)
+	resp, err := http.Get(feedSetting.URL)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -169,22 +187,35 @@ func getFeeds(urlPath string) {
 	feeds := session.DB("wcproc").C("feeds")
 
 	feed := Feed{}
-	feeds.Find(nil).Sort("-date").One(&feed)
+	feeds.Find(bson.M{"category": feedSetting.Name}).Sort("-date").One(&feed)
 
 	//convert the feed.date string to time.Time since unmarshal wont do it for me
 	for iter, element := range results.ItemList {
-		results.ItemList[iter].Date, _ = http.ParseTime(element.PubDate)
+
+		lastThree := element.PubDate[len(element.PubDate)-3:]
+
+		if _, err := strconv.Atoi(lastThree); err == nil {
+			results.ItemList[iter].Date, err = time.Parse(time.RFC1123Z, element.PubDate)
+			if err != nil {
+				fmt.Println(err.Error())
+			}
+		} else {
+			results.ItemList[iter].Date, err = time.Parse(time.RFC1123, element.PubDate)
+			if err != nil {
+				fmt.Println(err.Error())
+			}
+		}
+
 	}
 
 	//check to see if any articles exist past the last article date in db
-	fmt.Printf("feedDate: %v \n", feed.Date)
 
 	for iter, element := range results.ItemList {
-		//fmt.Printf("dbDates: %v \n", element.Date.Local())
 
 		if element.Date.After(feed.Date.Local()) {
 			fmt.Printf("adding:  %v -- %v \n", element.Date, element.Title)
-
+			results.ItemList[iter].ArticleId = feedSetting.ArticleId
+			results.ItemList[iter].Category = feedSetting.Name
 			_ = feeds.Insert(results.ItemList[iter])
 		}
 	}
@@ -220,7 +251,7 @@ func processWords(feed Feed) {
 		log.Fatal(err)
 	}
 
-	body := cascadia.MustCompile(".zn-body__paragraph").MatchAll(doc)
+	body := cascadia.MustCompile(feed.ArticleId).MatchAll(doc)
 
 	var strBuffer bytes.Buffer
 
@@ -248,10 +279,12 @@ func processWords(feed Feed) {
 		"him", "next", "time", "like", "...", "both", "stil", "why", "it", "even", "no", "do", "first", "two", "for", "or", "our", "did", "very", "yet",
 		"most", "new", "how", "you", "i", "we", "sure", "move", "close", "until", "my", "get", "go", "those", "though", "be", " ", "me", "met", "recent",
 		"rest", "end", "put", "seen", "else", "should", "met", "center", "over", "would", "much", "lot", "room", "three", "four", "five", "six", "seven",
-		"eight", "nine", "ten"}
+		"eight", "nine", "ten", "see", "set", "mr", "few", "old", "key", "sent", "tell", "ever", "under", "through", "led", "own", "such", "people",
+		"due", "role", "never", "look", "full", "expected", "try"}
 
 	for key, value := range words {
-		if !strings.ContainsAny(key, "-<>/_=;#&()*%$@1234567890") {
+		//get rid of words that have these in them
+		if !strings.ContainsAny(key, "-<>/_{}=;#&()*%$@1234567890\"") {
 			if !containWords(key, omitWords) {
 
 				item := Word{Name: strings.ToLower(strings.Trim(key, ". ,")), Count: value}
