@@ -73,7 +73,8 @@ func main() {
 		{Name: "CNN", URL: "http://rss.cnn.com/rss/cnn_topstories.rss", ArticleId: ".zn-body__paragraph"},
 		{Name: "CBS", URL: "http://www.cbsnews.com/latest/rss/main", ArticleId: "#article-entry"},
 		{Name: "BBC", URL: "http://feeds.bbci.co.uk/news/rss.xml", ArticleId: ".story-body__inner"},
-		{Name: "FOX", URL: "http://feeds.foxnews.com/foxnews/latest?format=xml", ArticleId: ".article-text"}}
+		{Name: "FOX", URL: "http://feeds.foxnews.com/foxnews/latest?format=xml", ArticleId: ".article-text"},
+		{Name: "NPR", URL: "http://www.npr.org/rss/rss.php?id=1001", ArticleId: "#storytext"}}
 
 	//time inverval when feed starts, feeds to put in, (utf8 only)
 	go startFeeder(300, feedSettings)
@@ -243,10 +244,17 @@ func getFeeds(feedSetting FeedSetting) {
 	for iter, element := range results.ItemList {
 
 		if element.Date.After(feed.Date.Local()) {
-			fmt.Printf("adding:  %v -- %v \n", element.Date, element.Title)
-			results.ItemList[iter].ArticleId = feedSetting.ArticleId
-			results.ItemList[iter].Category = feedSetting.Name
-			_ = feeds.Insert(results.ItemList[iter])
+
+			//check title name against db for duplicates, some news feeds like to change the pubdate over the length of 6 hours
+			matchup := Feed{}
+			feeds.Find(bson.M{"title": element.Title, "category": feedSetting.Name}).One(&matchup)
+
+			if matchup.Category == "" {
+				fmt.Printf("adding:  %v -- %v \n", element.Date, element.Title)
+				results.ItemList[iter].ArticleId = feedSetting.ArticleId
+				results.ItemList[iter].Category = feedSetting.Name
+				_ = feeds.Insert(results.ItemList[iter])
+			}
 		}
 	}
 
