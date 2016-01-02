@@ -13,21 +13,42 @@
 
   </head>
   <body>
-    <h1>News Word Cloud</h1>
+    <h1>News Word Scraper</h1>
 
-    <div style="float:left" id="BBC" style="min-width: 310px; height: 950px; margin: 0 auto"></div>
-    <div style="float:left" id="CNN" style="min-width: 310px; height: 950px; margin: 0 auto"></div>
-    <div style="float:left" id="CBS" style="min-width: 310px; height: 950px; margin: 0 auto"></div>
+    <div id="input">
+      <input id="filterText" type="text" />
+      <input id="cmdFilter" type="button" onclick="queryCharts()" value="filter" />
+
+    </div>
+
+    <div  id="BBC" style="float:left; min-width: 310px; height: 900px; margin: 0 auto"></div>
+    <div  id="CNN" style="float:left;  min-width: 310px; height: 900px; margin: 0 auto"></div>
+    <div  id="CBS" style="float:left;  min-width: 310px; height: 900px; margin: 0 auto"></div>
+    <div  id="FOX" style="float:left;  min-width: 310px; height: 900px; margin: 0 auto"></div>
 
     <script type="text/javascript">
 
-    loadFeedChart("BBC");
-    loadFeedChart("CBS");
-    loadFeedChart("CNN");
+    $("#filterText").keyup(function(event){
+      if(event.keyCode == 13){
+          $("#cmdFilter").click();
+      }
+    });
 
-    function loadFeedChart(category) {
 
-      $.get("/api/getwords", {category: category}, function (data) {
+    queryCharts()
+
+
+    function queryCharts()
+    {
+      loadFeedChart("BBC", document.getElementById('filterText').value);
+      loadFeedChart("CBS", document.getElementById('filterText').value);
+      loadFeedChart("CNN", document.getElementById('filterText').value);
+      loadFeedChart("FOX", document.getElementById('filterText').value);
+    }
+
+    function loadFeedChart(category, filter) {
+
+      $.get("/api/getwords", {category: category, filter}, function (data) {
 
           data = JSON.parse(data);
 
