@@ -22,11 +22,23 @@ import (
 	"gopkg.in/mgo.v2/bson"
 )
 
+//Word Contains Marshalled Mongo document data: parsed words of a feed
 type Word struct {
 	Name  string `bson:"_id" json:"name"`
 	Count int    `json:"count"`
 }
 
+type Grouping struct {
+	Date     string `bson:"date" json:"date"`
+	Category string `bson:"category" json:"category"`
+}
+
+type jsonWordFreq struct {
+	Groupings Grouping `bson:"_id" json:"grouping"`
+	Count     int      `json:"count"`
+}
+
+//Feed Contains Marshalled Mongo document data: parent feed data
 type Feed struct {
 	Id        bson.ObjectId `bson:"_id,omitempty"`
 	Title     string        `xml:"title"`
@@ -39,10 +51,13 @@ type Feed struct {
 	Processed bool
 }
 
-type Wrapper struct {
-	Words []Word
+//FeedCount container for feed count
+type FeedCount struct {
+	Id    bson.ObjectId `bson:"_id"`
+	count string        `bson:"count"`
 }
 
+//Result For storing rss xml Marshalled data
 type Result struct {
 	XMLName xml.Name `xml:"rss"`
 	Version string   `xml:"version,attr"`
@@ -55,12 +70,13 @@ type Result struct {
 	ItemList []Feed `xml:"channel>item"`
 }
 
+//Page stores html response
 type Page struct {
 	Title string
 	Body  []byte
 }
 
-//articleId is the class or id name of the element in which to get the articles words from (include . or #)
+//FeedSetting contains: articleId is the class or id name of the element in which to get the articles words from (include . or #)
 type FeedSetting struct {
 	Name      string
 	URL       string
@@ -76,14 +92,22 @@ func main() {
 		{Name: "FOX", URL: "http://feeds.foxnews.com/foxnews/latest?format=xml", ArticleId: ".article-text"},
 		{Name: "NPR", URL: "http://www.npr.org/rss/rss.php?id=1001", ArticleId: "#storytext"}}
 
-	//time inverval when feed starts, feeds to put in, (utf8 only)
+	//time inverval when check for new feeds
 	go startFeeder(300, feedSettings)
 	go startWordProc(301)
 
 	http.HandleFunc("/", handler)
 	http.HandleFunc("/api/getwords", getWordHandler)
+	http.HandleFunc("/api/getArticleCount", getArticleCount)
+	http.HandleFunc("/api/getTimeLine", getTimeLine)
 	http.ListenAndServe(":8080", nil)
 
+}
+
+func checkError(err error) {
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 func startFeeder(seconds int, feedSettings []FeedSetting) {
@@ -134,16 +158,77 @@ func handler(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Fprintf(w, string(p))
 
-	//use to count words
-	//db.feeds.aggregate({$match: { category: "BBC"}}, { $project: {  Words: 1 }}, { $unwind: "$Words" }, { $group: { _id: "$Words._id", count: { $sum: {$add: "$Words.count"} } }});
+}
+
+func getArticleCount(w http.ResponseWriter, r *http.Request) {
+
+	//categoryParam := r.URL.Query()["category"][0]
+
+	session, _ := mgo.Dial("localhost")
+	feeds := session.DB("wcproc").C("feeds")
+
+	//match := bson.M{"$match": bson.M{"category": "CBS"}}
+	group := bson.M{"$group": bson.M{"_id": 1, "count": bson.M{"$sum": 1}}}
+	//group := bson.M{"$group": bson.M{"_id": "$Words._id", "count": bson.M{"$sum": bson.M{"$add": "$Words.count"}}}}
+	operations := []bson.M{group}
+	pipe := feeds.Pipe(operations)
+
+	var results FeedCount
+	err := pipe.One(&results)
+	checkError(err)
+
+	session.Close()
+
+	jsonWords, err := json.Marshal(results)
+	if err != nil {
+		fmt.Printf("%v", err.Error())
+	}
+
+	fmt.Fprintf(w, string(jsonWords))
+}
+
+func getTimeLine(w http.ResponseWriter, r *http.Request) {
+	//db.feeds.aggregate({$project: {dater: { $dateToString: { format: "%Y-%m-%d", date: "$date" }}, Words:1, category:1}}, {$unwind: "$Words"}, {$match: {$and: [{ category: "FOX"}, {"Words._id" : "trump" }]}}, {$group : {_id: "$dater", count: { $sum: {$add: "$Words.count"}}}}, {$sort: {dater: -1}})
+
+	wordParam := strings.ToLower(r.URL.Query()["word"][0])
+
+	fmt.Printf("Querying Timeline for: %v \n", wordParam)
+
+	session, _ := mgo.Dial("localhost")
+	wordsCollection := session.DB("wcproc").C("feeds")
+
+	project := bson.M{"$project": bson.M{"dater": bson.M{"$dateToString": bson.M{"format": "%Y-%m-%d", "date": "$date"}}, "Words": 1, "category": 1}}
+	unWind := bson.M{"$unwind": "$Words"}
+	match := bson.M{"$match": bson.M{"Words._id": wordParam}}
+	group := bson.M{"$group": bson.M{"_id": bson.M{"date": "$dater", "category": "$category"}, "count": bson.M{"$sum": bson.M{"$add": "$Words.count"}}}}
+	sort := bson.M{"$sort": bson.M{"_id": 1}}
+
+	operations := []bson.M{project, unWind, match, group, sort}
+	pipe := wordsCollection.Pipe(operations)
+	var results []jsonWordFreq
+	err := pipe.All(&results)
+	checkError(err)
+
+	session.Close()
+
+	jsonWords, err := json.Marshal(results)
+	checkError(err)
+	fmt.Fprintf(w, string(jsonWords))
 
 }
 
 func getWordHandler(w http.ResponseWriter, r *http.Request) {
 
+	//mongo query used below
+	//db.feeds.aggregate({$match: { category: "BBC"}}, { $project: {  Words: 1 }}, { $unwind: "$Words" }, { $group: { _id: "$Words._id", count: { $sum: {$add: "$Words.count"} } }});
+
+	//this gets a specific word and category for each date
+
 	matchParam := r.URL.Query()["category"][0]
 	filterParam := r.URL.Query()["filter"][0]
 	filterParamAry := strings.Split(filterParam, ",")
+
+	fmt.Printf("Querying Wordhandler for: %v \n", filterParam)
 
 	session, _ := mgo.Dial("localhost")
 	wordsCollection := session.DB("wcproc").C("feeds")
@@ -153,8 +238,6 @@ func getWordHandler(w http.ResponseWriter, r *http.Request) {
 	unWind := bson.M{"$unwind": "$Words"}
 
 	group := bson.M{"$group": bson.M{"_id": "$Words._id", "count": bson.M{"$sum": bson.M{"$add": "$Words.count"}}}}
-
-	//{$match: {$or:[{_id:"trump"}, {_id:"uk"}]}}
 
 	sort := bson.M{"$sort": bson.M{"count": -1}}
 	limit := bson.M{"$limit": 50}
@@ -167,7 +250,6 @@ func getWordHandler(w http.ResponseWriter, r *http.Request) {
 
 		for _, i := range filterParamAry {
 			tempAry = append(tempAry, bson.M{"_id": strings.Trim(i, " ")})
-
 		}
 
 		filter := bson.M{"$match": bson.M{"$or": tempAry}}
@@ -181,25 +263,23 @@ func getWordHandler(w http.ResponseWriter, r *http.Request) {
 
 	var results []Word
 	err := pipe.All(&results)
-	if err != nil {
-		fmt.Printf("%v", err.Error())
-	}
+	checkError(err)
 
 	session.Close()
 
 	jsonWords, err := json.Marshal(results)
+	checkError(err)
 	fmt.Fprintf(w, string(jsonWords))
-
-	//use to count words
-	//db.feeds.aggregate({ $project: {  Words: 1 }}, { $unwind: "$Words" }, { $group: { _id: "$Words.name", count: { $sum: 1 } }});
-
 }
 
 func getFeeds(feedSetting FeedSetting) {
 
 	resp, err := http.Get(feedSetting.URL)
+
+	//there's no reason to panic on this
 	if err != nil {
-		log.Fatal(err)
+		fmt.Printf("Couldn't reach URL: %v \n\n", feedSetting.URL)
+		return
 	}
 
 	var results Result
@@ -207,10 +287,7 @@ func getFeeds(feedSetting FeedSetting) {
 	decoder := xml.NewDecoder(resp.Body)
 	decoder.CharsetReader = charset.NewReaderLabel
 	err = decoder.Decode(&results)
-	if err != nil {
-		log.Fatal(err)
-
-	}
+	checkError(err)
 
 	//xml.Unmarshal([]byte(tempStr), &results)
 
@@ -224,23 +301,19 @@ func getFeeds(feedSetting FeedSetting) {
 	for iter, element := range results.ItemList {
 
 		lastThree := element.PubDate[len(element.PubDate)-3:]
+		results.ItemList[iter].Link = strings.Trim(element.Link, " ")
 
 		if _, err := strconv.Atoi(lastThree); err == nil {
 			results.ItemList[iter].Date, err = time.Parse(time.RFC1123Z, element.PubDate)
-			if err != nil {
-				fmt.Println(err.Error())
-			}
+			checkError(err)
 		} else {
 			results.ItemList[iter].Date, err = time.Parse(time.RFC1123, element.PubDate)
-			if err != nil {
-				fmt.Println(err.Error())
-			}
+			checkError(err)
 		}
 
 	}
 
 	//check to see if any articles exist past the last article date in db
-
 	for iter, element := range results.ItemList {
 
 		if element.Date.After(feed.Date.Local()) {
@@ -257,9 +330,7 @@ func getFeeds(feedSetting FeedSetting) {
 			}
 		}
 	}
-
 	session.Close()
-
 }
 
 //array functionality with strings.contains
@@ -269,7 +340,6 @@ func containWords(word string, words []string) bool {
 			return true
 		}
 	}
-
 	return false
 }
 
@@ -280,14 +350,15 @@ func processWords(feed Feed) {
 	feeds := session.DB("wcproc").C("feeds")
 
 	resp, err := http.Get(feed.Link)
+	//there's no reason to panic on this
 	if err != nil {
-		fmt.Println(err)
+		fmt.Printf("Couldn't reach URL: %v \n\n", feed.Link)
+		return
 	}
 
 	doc, err := html.Parse(resp.Body)
-	if err != nil {
-		log.Fatal(err)
-	}
+
+	checkError(err)
 
 	body := cascadia.MustCompile(feed.ArticleId).MatchAll(doc)
 
@@ -301,8 +372,6 @@ func processWords(feed Feed) {
 		strBuffer.WriteString(" " + re.ReplaceAllString(html.UnescapeString(buf.String()), ""))
 		//fmt.Printf("... %v ... \n", re.ReplaceAllString(html.UnescapeString(buf.String()), ""))
 	}
-
-	//----------------
 
 	f := func(c rune) bool {
 		return !unicode.IsLetter(c) && unicode.IsNumber(c)
@@ -322,7 +391,7 @@ func processWords(feed Feed) {
 		"rest", "end", "put", "seen", "else", "should", "met", "center", "over", "would", "much", "lot", "room", "three", "four", "five", "six", "seven",
 		"eight", "nine", "ten", "see", "set", "mr", "few", "old", "key", "sent", "tell", "ever", "under", "through", "led", "own", "such", "people",
 		"due", "role", "never", "look", "full", "try", "was", "said", "this", "are", "their", "when", "can", "now", "after", "than", "some", "when",
-		"her", "image", "about", "she", "i", "all", "one", "have", "has"}
+		"her", "image", "about", "she", "i", "all", "one", "have", "has", "your", "what", "other", "there", "caption", "copyright"}
 
 	//fmt.Printf("OMITTING:")
 	for key, value := range words {

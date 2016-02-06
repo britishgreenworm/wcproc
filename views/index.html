@@ -15,17 +15,36 @@
   <body>
     <h1>News Word Scraper</h1>
 
+    <p>to filter by certain words, type them in the textbox below.  seperate them with a comma.</p>
+
+    <p>Example: trump, gun, clinton, science</p>
+
     <div id="input">
       <input id="filterText" type="text" />
       <input id="cmdFilter" type="button" onclick="queryCharts()" value="filter" />
 
     </div>
+    <br>
 
-    <div  id="BBC" style="float:left; min-width: 310px; height: 900px; margin: 0 auto"></div>
-    <div  id="CNN" style="float:left;  min-width: 310px; height: 900px; margin: 0 auto"></div>
-    <div  id="CBS" style="float:left;  min-width: 310px; height: 900px; margin: 0 auto"></div>
-    <div  id="FOX" style="float:left;  min-width: 310px; height: 900px; margin: 0 auto"></div>
-    <div  id="NPR" style="float:left;  min-width: 310px; height: 900px; margin: 0 auto"></div>
+    <div>
+    <div  id="BBC" style="float:left; min-width: 310px; height: 500px; margin: 0 auto"></div>
+    <div  id="CNN" style="float:left;  min-width: 310px; height: 500px; margin: 0 auto"></div>
+    <div  id="CBS" style="float:left;  min-width: 310px; height: 500px; margin: 0 auto"></div>
+    <div  id="FOX" style="float:left;  min-width: 310px; height: 500px; margin: 0 auto"></div>
+    <div  id="NPR" style="float:left;  min-width: 310px; height: 500px; margin: 0 auto"></div>
+  </div>
+
+
+
+    <div id="input2" style="clear:both;">
+        <p>enter only one word in the textbox below</p>
+      <input id="filterText2" type="text" />
+      <input id="cmdFilter" type="button" onclick="queryTimeLine()" value="Timeline" />
+
+    </div>
+
+    <div id="timeline" style="min-width: 310px; height: 500px; margin: 0 auto"></div>
+
 
     <script type="text/javascript">
 
@@ -35,9 +54,12 @@
       }
     });
 
-
     queryCharts()
 
+    function queryTimeLine()
+    {
+      getTimeLineData(document.getElementById('filterText2').value);
+    }
 
     function queryCharts()
     {
@@ -46,6 +68,91 @@
       loadFeedChart("CNN", document.getElementById('filterText').value);
       loadFeedChart("FOX", document.getElementById('filterText').value);
       loadFeedChart("NPR", document.getElementById('filterText').value);
+
+
+    }
+
+    function getTimeLineData(word) {
+      $.get("/api/getTimeLine", {word}, function (payload) {
+          payload = JSON.parse(payload);
+          var dates = [];
+          var series = [];
+
+          var fox = {name: "FOX", data: [], color: "red"};
+          var cbs = {name: "CBS", data: []};
+          var bbc = {name: "BBC", data: [], color: "purple"};
+          var npr = {name: "NPR", data: []};
+          var cnn = {name: "CNN", data: [], color: "blue"};
+
+
+          //name: category, data: []
+
+
+
+          for (var i = 0, len = payload.length; i < len; i++) {
+
+
+              if (dates.indexOf(payload[i].grouping.date) == -1)
+                dates.push(payload[i].grouping.date);
+
+              //counts.push(data[i].count);
+          }
+
+
+          for (var i = 0, len = dates.length; i < len; i++) {
+              if (dates.indexOf(payload[i].grouping.date) != -1 && payload[i].grouping.category == "FOX")
+                fox.data.push(payload[i].count)
+              else
+                fox.data.push(0)
+
+              if (dates.indexOf(payload[i].grouping.date) != -1 && payload[i].grouping.category == "CBS")
+                cbs.data.push(payload[i].count)
+              else
+                cbs.data.push(0)
+
+              if (dates.indexOf(payload[i].grouping.date) != -1 && payload[i].grouping.category == "BBC")
+                bbc.data.push(payload[i].count)
+              else
+                bbc.data.push(0)
+
+              if (dates.indexOf(payload[i].grouping.date) != -1 && payload[i].grouping.category == "NPR")
+                npr.data.push(payload[i].count)
+              else
+                npr.data.push(0)
+
+              if (dates.indexOf(payload[i].grouping.date) != -1 && payload[i].grouping.category == "CNN")
+                cnn.data.push(payload[i].count)
+              else
+                cnn.data.push(0)
+
+          }
+
+          series.push(fox)
+          series.push(cbs)
+          series.push(bbc)
+          series.push(npr)
+          series.push(cnn)
+
+          //alert(JSON.stringify(series))
+
+
+          loadTimeLine(dates, series);
+
+      });
+    }
+
+
+    function loadTimeLine(dates, series) {
+            $('#timeline').highcharts({
+            title: {
+                text: 'Word count on date',
+                x: -20 //center
+            },
+            xAxis: {
+                categories: dates
+            },
+            series: series
+        });
     }
 
     function loadFeedChart(category, filter) {
@@ -90,8 +197,6 @@
           });
       });
     }
-
-
     </script>
   </body>
 </html>
