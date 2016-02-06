@@ -70,7 +70,6 @@ type Result struct {
 	ItemList []Feed `xml:"channel>item"`
 }
 
-//Page stores html response
 type Page struct {
 	Title string
 	Body  []byte
@@ -93,8 +92,7 @@ func main() {
 		{Name: "NPR", URL: "http://www.npr.org/rss/rss.php?id=1001", ArticleId: "#storytext"}}
 
 	//time inverval when check for new feeds
-	go startFeeder(300, feedSettings)
-	go startWordProc(301)
+	go startFeeder(60000, feedSettings)
 
 	http.HandleFunc("/", handler)
 	http.HandleFunc("/api/getwords", getWordHandler)
@@ -112,19 +110,13 @@ func checkError(err error) {
 
 func startFeeder(seconds int, feedSettings []FeedSetting) {
 	for true {
+
 		//only can use utf-8 encoded xml files
 		for _, feed := range feedSettings {
 			fmt.Printf("Looking for new feeds in... %v \n", feed.Name)
 			getFeeds(feed)
 		}
 
-		time.Sleep(time.Duration(seconds) * time.Second)
-	}
-}
-
-func startWordProc(seconds int) {
-	for true {
-		//grab all the feeds that haven't been processed
 		session, _ := mgo.Dial("localhost")
 		feedCollection := session.DB("wcproc").C("feeds")
 		feeds := []Feed{}
@@ -137,7 +129,6 @@ func startWordProc(seconds int) {
 
 			processWords(feed)
 			fmt.Printf("processed..: %v from: %v \n", feed.Title, feed.Category)
-
 		}
 
 		time.Sleep(time.Duration(seconds) * time.Millisecond)

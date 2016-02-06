@@ -21,25 +21,20 @@
 
     <div id="input">
       <input id="filterText" type="text" />
-      <input id="cmdFilter" type="button" onclick="queryCharts()" value="filter" />
+      <input id="cmdFilter" type="button" onclick="loadFeedChart(document.getElementById('filterText').value)" value="filter"  />
 
     </div>
     <br>
 
     <div>
-    <div  id="BBC" style="float:left; min-width: 310px; height: 500px; margin: 0 auto"></div>
-    <div  id="CNN" style="float:left;  min-width: 310px; height: 500px; margin: 0 auto"></div>
-    <div  id="CBS" style="float:left;  min-width: 310px; height: 500px; margin: 0 auto"></div>
-    <div  id="FOX" style="float:left;  min-width: 310px; height: 500px; margin: 0 auto"></div>
-    <div  id="NPR" style="float:left;  min-width: 310px; height: 500px; margin: 0 auto"></div>
   </div>
 
-
+  <div  id="seriesChart" style="min-width: 310px; height: 500px; margin: 0 auto"></div>
 
     <div id="input2" style="clear:both;">
         <p>enter only one word in the textbox below</p>
       <input id="filterText2" type="text" />
-      <input id="cmdFilter" type="button" onclick="queryTimeLine()" value="Timeline" />
+      <input id="cmdFilter" type="button" onclick="getTimeLineData(document.getElementById('filterText2').value)" value="Timeline" />
 
     </div>
 
@@ -54,22 +49,142 @@
       }
     });
 
-    queryCharts()
+    loadFeedChart("trump,clinton,gun,science");
+    getTimeLineData("gun");
 
-    function queryTimeLine()
-    {
-      getTimeLineData(document.getElementById('filterText2').value);
+    function loadFeedChart(filter) {
+      filter = filter.replace(/\s/g,'');
+      var seriesPayload = [];
+      var names = filter.split(",");
+
+      $.when(
+        $.get("/api/getwords", {category: "FOX", filter}, function (data) {
+            data = JSON.parse(data);
+            var counts = [];
+            var obj = {};
+
+            for (var i = 0, len = data.length; i < len; i++) {
+              if (names.indexOf(data[i].name.toLowerCase()) != -1) {
+                  counts.push(data[i].count);
+              } else {
+                  counts.push(0);
+              }
+            }
+
+            obj.name = "FOX";
+            obj.data = counts;
+            seriesPayload.push(obj);
+        }),
+        $.get("/api/getwords", {category: "CNN", filter}, function (data) {
+            data = JSON.parse(data);
+            var counts = [];
+            var obj = {};
+
+            for (var i = 0, len = data.length; i < len; i++) {
+              if (names.indexOf(data[i].name.toLowerCase()) != -1) {
+                  counts.push(data[i].count);
+              } else {
+                  counts.push(0);
+              }
+            }
+
+            obj.name = "CNN";
+            obj.data = counts;
+            seriesPayload.push(obj);
+        }),
+        $.get("/api/getwords", {category: "NPR", filter}, function (data) {
+            data = JSON.parse(data);
+            var counts = [];
+            var obj = {};
+
+            for (var i = 0, len = data.length; i < len; i++) {
+              if (names.indexOf(data[i].name.toLowerCase()) != -1) {
+                  counts.push(data[i].count);
+              } else {
+                  counts.push(0);
+              }
+            }
+
+            obj.name = "NPR";
+            obj.data = counts;
+            seriesPayload.push(obj);
+        }),
+        $.get("/api/getwords", {category: "BBC", filter}, function (data) {
+            data = JSON.parse(data);
+            var counts = [];
+            var obj = {};
+
+            for (var i = 0, len = data.length; i < len; i++) {
+              if (names.indexOf(data[i].name.toLowerCase()) != -1) {
+                  counts.push(data[i].count);
+              } else {
+                  counts.push(0);
+              }
+            }
+
+            obj.name = "BBC";
+            obj.data = counts;
+            seriesPayload.push(obj);
+        }),
+        $.get("/api/getwords", {category: "CBS", filter}, function (data) {
+            data = JSON.parse(data);
+            var counts = [];
+            var obj = {};
+
+            for (var i = 0, len = data.length; i < len; i++) {
+              if (names.indexOf(data[i].name.toLowerCase()) != -1) {
+                  counts.push(data[i].count);
+              } else {
+                  counts.push(0);
+              }
+            }
+
+            obj.name = "CBS";
+            obj.data = counts;
+            seriesPayload.push(obj);
+        })
+
+
+      ).then(function (){
+
+          console.log(JSON.stringify(seriesPayload));
+          console.log(JSON.stringify(names));
+
+          $("#seriesChart").highcharts({
+              title: { text:"combined"},
+              chart: {
+                  type: 'bar'
+
+              },
+              xAxis: {
+                  categories: names
+              },
+              plotOptions: {
+                  bar: {
+                      dataLabels: {
+                          enabled: true
+                      }
+                  }
+              },
+              credits: {
+                  enabled: false
+              },
+              series: seriesPayload
+          })
+    });
     }
 
-    function queryCharts()
-    {
-      loadFeedChart("BBC", document.getElementById('filterText').value);
-      loadFeedChart("CBS", document.getElementById('filterText').value);
-      loadFeedChart("CNN", document.getElementById('filterText').value);
-      loadFeedChart("FOX", document.getElementById('filterText').value);
-      loadFeedChart("NPR", document.getElementById('filterText').value);
-
-
+    function loadTimeLine(dates, series, word) {
+            $('#timeline').highcharts({
+            title: {
+                text: 'Timeline for ' + word,
+                x: -20 //center
+            },
+            xAxis: {
+                categories: dates
+            },
+            series: series
+        });
     }
 
     function getTimeLineData(word) {
@@ -84,20 +199,10 @@
           var npr = {name: "NPR", data: []};
           var cnn = {name: "CNN", data: [], color: "blue"};
 
-
-          //name: category, data: []
-
-
-
           for (var i = 0, len = payload.length; i < len; i++) {
-
-
               if (dates.indexOf(payload[i].grouping.date) == -1)
                 dates.push(payload[i].grouping.date);
-
-              //counts.push(data[i].count);
           }
-
 
           for (var i = 0, len = dates.length; i < len; i++) {
               if (dates.indexOf(payload[i].grouping.date) != -1 && payload[i].grouping.category == "FOX")
@@ -133,68 +238,7 @@
           series.push(npr)
           series.push(cnn)
 
-          //alert(JSON.stringify(series))
-
-
-          loadTimeLine(dates, series);
-
-      });
-    }
-
-
-    function loadTimeLine(dates, series) {
-            $('#timeline').highcharts({
-            title: {
-                text: 'Word count on date',
-                x: -20 //center
-            },
-            xAxis: {
-                categories: dates
-            },
-            series: series
-        });
-    }
-
-    function loadFeedChart(category, filter) {
-
-      $.get("/api/getwords", {category: category, filter}, function (data) {
-
-          data = JSON.parse(data);
-
-          var names = [];
-          var counts = [];
-
-          for (var i = 0, len = data.length; i < len; i++) {
-            if (data[i].name != "")
-            {
-              names.push(data[i].name);
-              counts.push(data[i].count);
-            }
-          }
-
-          $('#' + category).highcharts({
-              title: { text:category},
-              chart: {
-                  type: 'bar'
-
-              },
-              xAxis: {
-                  categories: names
-              },
-              plotOptions: {
-                  bar: {
-                      dataLabels: {
-                          enabled: true
-                      }
-                  }
-              },
-              credits: {
-                  enabled: false
-              },
-              series: [{
-                  data: counts
-              }]
-          });
+          loadTimeLine(dates, series, word);
       });
     }
     </script>
